@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const vxfw = @import("vxfw.zig");
 
 const Padding = @This();
-const PadValues = struct {
+pub const PadValues = struct {
     left: u16 = 0,
     right: u16 = 0,
     top: u16 = 0,
