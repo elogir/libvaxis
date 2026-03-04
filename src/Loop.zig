@@ -18,8 +18,9 @@ pub fn Loop(comptime T: type) type {
 
         tty: *Tty,
         vaxis: *Vaxis,
+        io: std.Io,
 
-        queue: Queue(T, 512) = .{},
+        queue: Queue(T, 512),
         thread: ?std.Thread = null,
         should_quit: bool = false,
 
@@ -214,7 +215,7 @@ pub fn handleEventGeneric(self: anytype, vx: *Vaxis, cache: *GraphemeCache, Even
                     }
                 },
                 .cap_da1 => {
-                    std.Thread.Futex.wake(&vx.query_futex, 10);
+                    std.Io.futexWake(self.io, u32, &vx.query_futex.raw, 10);
                     vx.queries_done.store(true, .unordered);
                 },
                 .mouse => |mouse| {
@@ -359,7 +360,7 @@ pub fn handleEventGeneric(self: anytype, vx: *Vaxis, cache: *GraphemeCache, Even
                     vx.caps.multi_cursor = true;
                 },
                 .cap_da1 => {
-                    std.Thread.Futex.wake(&vx.query_futex, 10);
+                    std.Io.futexWake(self.io, u32, &vx.query_futex.raw, 10);
                     vx.queries_done.store(true, .unordered);
                 },
                 .winsize => |winsize| {
@@ -386,13 +387,13 @@ test Loop {
         foo: u8,
     };
 
-    var tty = try vaxis.Tty.init(&.{});
+    var tty = try vaxis.Tty.init(std.testing.io);
     defer tty.deinit();
 
     var vx = try vaxis.init(std.testing.allocator, .{});
     defer vx.deinit(std.testing.allocator, tty.writer());
 
-    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx };
+    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx, .io = std.testing.io, .queue = .{ .io = std.testing.io } };
     try loop.init();
 
     try loop.start();
@@ -400,5 +401,5 @@ test Loop {
 
     // Optionally enter the alternate screen
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_ms);
+    try vx.queryTerminal(tty.writer(), std.testing.io, 1 * std.time.ns_per_ms);
 }

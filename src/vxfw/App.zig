@@ -16,7 +16,6 @@ tty: vaxis.Tty,
 vx: vaxis.Vaxis,
 timers: std.ArrayList(vxfw.Tick),
 wants_focus: ?vxfw.Widget,
-buffer: [1024]u8,
 io: std.Io,
 
 /// Runtime options
@@ -29,9 +28,9 @@ pub const Options = struct {
 /// object on the heap. Call destroy when the app is complete to reset terminal state and release
 /// resources
 pub fn init(allocator: Allocator, io: std.Io) !App {
-    var app: App = .{
+    return .{
         .allocator = allocator,
-        .tty = undefined,
+        .tty = try vaxis.Tty.init(io),
         .vx = try vaxis.init(allocator, .{
             .system_clipboard_allocator = allocator,
             .kitty_keyboard_flags = .{
@@ -40,11 +39,8 @@ pub fn init(allocator: Allocator, io: std.Io) !App {
         }),
         .timers = std.ArrayList(vxfw.Tick){},
         .wants_focus = null,
-        .buffer = undefined,
         .io = io,
     };
-    app.tty = try vaxis.Tty.init(io, &app.buffer);
-    return app;
 }
 
 pub fn deinit(self: *App) void {
@@ -57,7 +53,8 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     const tty = &self.tty;
     const vx = &self.vx;
 
-    var loop: EventLoop = .{ .tty = tty, .vaxis = vx };
+    const io = self.io;
+    var loop: EventLoop = .{ .tty = tty, .vaxis = vx, .io = io, .queue = .{ .io = io } };
     try loop.start();
     defer loop.stop();
 
@@ -67,7 +64,7 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     loop.postEvent(.focus_in);
 
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), io, 1 * std.time.ns_per_s);
     try vx.setBracketedPaste(tty.writer(), true);
     try vx.subscribeToColorSchemeUpdates(tty.writer());
 
@@ -98,10 +95,8 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     try focus_handler.path_to_focused.append(self.allocator, widget);
     defer focus_handler.deinit(self.allocator);
 
-    const io = self.io;
-
     // Timestamp of our next frame
-    var next_frame_ms: u64 = try nowMs(io);
+    var next_frame_ms: u64 = nowMs(io);
 
     // Create our event context
     var ctx: vxfw.EventContext = .{
@@ -116,7 +111,7 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     defer ctx.cmds.deinit(self.allocator);
 
     while (true) {
-        const now_ms: u64 = try nowMs(io);
+        const now_ms: u64 = nowMs(io);
         if (now_ms >= next_frame_ms) {
             // Deadline exceeded. Schedule the next frame
             next_frame_ms = now_ms + tick_ms;
@@ -301,7 +296,7 @@ fn handleCommand(self: *App, cmds: *vxfw.CommandList) Allocator.Error!void {
 }
 
 fn checkTimers(self: *App, ctx: *vxfw.EventContext) anyerror!void {
-    const now_ms = try nowMs(ctx.io);
+    const now_ms = nowMs(ctx.io);
 
     // timers are always sorted descending
     while (self.timers.pop()) |tick| {
@@ -354,12 +349,16 @@ const MouseHandler = struct {
             .surface = last_frame,
             .z_index = 0,
         };
-        const mouse_point: vxfw.Point = .{
-            .row = @intCast(mouse.row),
-            .col = @intCast(mouse.col),
-        };
-        if (sub.containsPoint(mouse_point)) {
-            try last_frame.hitTest(app.allocator, &hits, mouse_point);
+
+        if (mouse.row >= 0 and mouse.col >= 0) {
+            const mouse_point: vxfw.Point = .{
+                .row = @intCast(mouse.row),
+                .col = @intCast(mouse.col),
+            };
+
+            if (sub.containsPoint(mouse_point)) {
+                try last_frame.hitTest(app.allocator, &hits, mouse_point);
+            }
         }
 
         // We store the hit list from the last mouse event to determine mouse_enter and mouse_leave
@@ -413,12 +412,16 @@ const MouseHandler = struct {
             .surface = last_frame,
             .z_index = 0,
         };
-        const mouse_point: vxfw.Point = .{
-            .row = @intCast(mouse.row),
-            .col = @intCast(mouse.col),
-        };
-        if (sub.containsPoint(mouse_point)) {
-            try last_frame.hitTest(app.allocator, &hits, mouse_point);
+
+        if (mouse.row >= 0 and mouse.col >= 0) {
+            const mouse_point: vxfw.Point = .{
+                .row = @intCast(mouse.row),
+                .col = @intCast(mouse.col),
+            };
+
+            if (sub.containsPoint(mouse_point)) {
+                try last_frame.hitTest(app.allocator, &hits, mouse_point);
+            }
         }
 
         // Handle mouse_enter and mouse_leave events
@@ -608,7 +611,7 @@ const FocusHandler = struct {
     }
 };
 
-fn nowMs(io: std.Io) std.Io.Clock.Error!u64 {
-    const now = try std.Io.Clock.now(.real, io);
+fn nowMs(io: std.Io) u64 {
+    const now = std.Io.Clock.now(.real, io);
     return @intCast(now.toMilliseconds());
 }

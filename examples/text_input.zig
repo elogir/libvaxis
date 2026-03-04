@@ -39,6 +39,8 @@ pub fn main(init: std.process.Init) !void {
     var loop: vaxis.Loop(Event) = .{
         .vaxis = &vx,
         .tty = &tty,
+        .io = init.io,
+        .queue = .{ .io = init.io },
     };
     try loop.init();
 
@@ -63,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     try writer.flush();
     // Sends queries to terminal to detect certain features. This should
     // _always_ be called, but is left to the application to decide when
-    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), init.io, 1 * std.time.ns_per_s);
 
     // The main event loop. Vaxis provides a thread safe, blocking, buffered
     // queue which can serve as the primary event queue for an application

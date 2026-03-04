@@ -19,12 +19,14 @@ pub fn main(init: std.process.Init) !void {
     var loop: vaxis.Loop(Event) = .{
         .vaxis = &vx,
         .tty = &tty,
+        .io = init.io,
+        .queue = .{ .io = init.io },
     };
     try loop.init();
     try loop.start();
     defer loop.stop();
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 20 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), init.io, 20 * std.time.ns_per_s);
     var text_view = TextView{};
     var text_view_buffer = TextView.Buffer{};
     defer text_view_buffer.deinit(alloc);

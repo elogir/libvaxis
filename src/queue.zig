@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const atomic = std.atomic;
-const Condition = std.Thread.Condition;
+const Condition = std.Io.Condition;
 
 /// Thread safe. Fixed size. Blocking push and pop.
 pub fn Queue(
@@ -11,23 +11,25 @@ pub fn Queue(
     return struct {
         buf: [size]T = undefined,
 
+        io: std.Io,
+
         read_index: usize = 0,
         write_index: usize = 0,
 
-        mutex: std.Thread.Mutex = .{},
+        mutex: std.Io.Mutex = .init,
         // blocks when the buffer is full
-        not_full: Condition = .{},
+        not_full: Condition = .init,
         // ...or empty
-        not_empty: Condition = .{},
+        not_empty: Condition = .init,
 
         const Self = @This();
 
         /// Pop an item from the queue. Blocks until an item is available.
         pub fn pop(self: *Self) T {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             while (self.isEmptyLH()) {
-                self.not_empty.wait(&self.mutex);
+                self.not_empty.waitUncancelable(self.io, &self.mutex);
             }
             std.debug.assert(!self.isEmptyLH());
             return self.popAndSignalLH();
@@ -36,10 +38,10 @@ pub fn Queue(
         /// Push an item into the queue. Blocks until an item has been
         /// put in the queue.
         pub fn push(self: *Self, item: T) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             while (self.isFullLH()) {
-                self.not_full.wait(&self.mutex);
+                self.not_full.waitUncancelable(self.io, &self.mutex);
             }
             std.debug.assert(!self.isFullLH());
             self.pushAndSignalLH(item);
@@ -49,8 +51,8 @@ pub fn Queue(
         /// was successfully placed in the queue, false if the queue
         /// was full.
         pub fn tryPush(self: *Self, item: T) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             if (self.isFullLH()) return false;
             self.pushAndSignalLH(item);
             return true;
@@ -59,28 +61,28 @@ pub fn Queue(
         /// Pop an item from the queue. Returns null when no item is
         /// available.
         pub fn tryPop(self: *Self) ?T {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             if (self.isEmptyLH()) return null;
             return self.popAndSignalLH();
         }
 
         /// Poll the queue. This call blocks until events are in the queue
         pub fn poll(self: *Self) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             while (self.isEmptyLH()) {
-                self.not_empty.wait(&self.mutex);
+                self.not_empty.waitUncancelable(self.io, &self.mutex);
             }
             std.debug.assert(!self.isEmptyLH());
         }
 
         pub fn lock(self: *Self) void {
-            self.mutex.lock();
+            self.mutex.lockUncancelable(self.io);
         }
 
         pub fn unlock(self: *Self) void {
-            self.mutex.unlock();
+            self.mutex.unlock(self.io);
         }
 
         /// Used to efficiently drain the queue while the lock is externally held
@@ -92,7 +94,7 @@ pub fn Queue(
             const was_full = self.isFullLH();
             const item = self.popLH();
             if (was_full) {
-                self.not_full.signal();
+                self.not_full.signal(self.io);
             }
             return item;
         }
@@ -108,15 +110,15 @@ pub fn Queue(
 
         /// Returns `true` if the queue is empty and `false` otherwise.
         pub fn isEmpty(self: *Self) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             return self.isEmptyLH();
         }
 
         /// Returns `true` if the queue is full and `false` otherwise.
         pub fn isFull(self: *Self) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             return self.isFullLH();
         }
 
@@ -143,7 +145,7 @@ pub fn Queue(
             self.buf[self.mask(self.write_index)] = item;
             self.write_index = self.mask2(self.write_index + 1);
             if (was_empty) {
-                self.not_empty.signal();
+                self.not_empty.signal(self.io);
             }
         }
 
@@ -151,7 +153,7 @@ pub fn Queue(
             const was_full = self.isFullLH();
             const result = self.popLH();
             if (was_full) {
-                self.not_full.signal();
+                self.not_full.signal(self.io);
             }
             return result;
         }
@@ -167,7 +169,7 @@ pub fn Queue(
 const testing = std.testing;
 const cfg = Thread.SpawnConfig{ .allocator = testing.allocator };
 test "Queue: simple push / pop" {
-    var queue: Queue(u8, 16) = .{};
+    var queue: Queue(u8, 16) = .{ .io = std.testing.io };
     queue.push(1);
     queue.push(2);
     const pop = queue.pop();
@@ -182,7 +184,7 @@ fn testPushPop(q: *Queue(u8, 2)) !void {
 }
 
 test "Fill, wait to push, pop once in another thread" {
-    var queue: Queue(u8, 2) = .{};
+    var queue: Queue(u8, 2) = .{ .io = std.testing.io };
     queue.push(1);
     queue.push(2);
     const t = try Thread.spawn(cfg, testPushPop, .{&queue});
@@ -202,7 +204,7 @@ fn testPush(q: *Queue(u8, 2)) void {
 }
 
 test "Try to pop, fill from another thread" {
-    var queue: Queue(u8, 2) = .{};
+    var queue: Queue(u8, 2) = .{ .io = std.testing.io };
     const thread = try Thread.spawn(cfg, testPush, .{&queue});
     for (0..5) |idx| {
         try testing.expectEqual(@as(u8, @intCast(idx)), queue.pop());
@@ -217,8 +219,8 @@ fn sleepyPop(q: *Queue(u8, 2), state: *atomic.Value(u8)) !void {
 
     // Then we spuriously wake it up, because that's a thing that can
     // happen.
-    q.not_full.signal();
-    q.not_empty.signal();
+    q.not_full.signal(q.io);
+    q.not_empty.signal(q.io);
 
     // Then give the other thread a good chance of waking up. It's not
     // clear that yield guarantees the other thread will be scheduled,
@@ -238,8 +240,8 @@ fn sleepyPop(q: *Queue(u8, 2), state: *atomic.Value(u8)) !void {
     std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
 
     // Another spurious wake...
-    q.not_full.signal();
-    q.not_empty.signal();
+    q.not_full.signal(q.io);
+    q.not_empty.signal(q.io);
     // And another chance for the other thread to see that it's
     // spurious and go back to sleep.
     try Thread.yield();
@@ -256,19 +258,20 @@ test "Fill, block, fill, block" {
     // that too (after some time) then drain the queue. This test
     // fails if the while loop in `push` is turned into an `if`.
 
-    var queue: Queue(u8, 2) = .{};
+    var queue: Queue(u8, 2) = .{ .io = std.testing.io };
     var state = atomic.Value(u8).init(0);
     const thread = try Thread.spawn(cfg, sleepyPop, .{ &queue, &state });
     queue.push(1);
     queue.push(2);
     state.store(1, .release);
-    const start = try std.time.Instant.now();
+    const start = std.Io.Clock.Timestamp.now(std.testing.io, .awake);
     queue.push(3); // This one should block.
-    const end = try std.time.Instant.now();
+    const end = std.Io.Clock.Timestamp.now(std.testing.io, .awake);
 
     // Just to make sure the sleeps are yielding to this thread, make
     // sure it took at least 5ms to do the push.
-    try std.testing.expect(end.since(start) / std.time.ns_per_ms > 5);
+    const elapsed = start.durationTo(end);
+    try std.testing.expect(elapsed.raw.toMilliseconds() > 5);
 
     state.store(2, .release);
     // This should block again, waiting for the other thread.
@@ -286,8 +289,8 @@ fn sleepyPush(q: *Queue(u8, 1), state: *atomic.Value(u8)) !void {
     std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
 
     // Spurious wake
-    q.not_full.signal();
-    q.not_empty.signal();
+    q.not_full.signal(q.io);
+    q.not_empty.signal(q.io);
 
     try Thread.yield();
     std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
@@ -302,8 +305,8 @@ fn sleepyPush(q: *Queue(u8, 1), state: *atomic.Value(u8)) !void {
     std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
 
     // Spurious wake
-    q.not_full.signal();
-    q.not_empty.signal();
+    q.not_full.signal(q.io);
+    q.not_empty.signal(q.io);
 
     q.push(2);
 }
@@ -313,7 +316,7 @@ test "Drain, block, drain, block" {
     // test should fail if the `while` loop in `pop` is turned into an
     // `if`.
 
-    var queue: Queue(u8, 1) = .{};
+    var queue: Queue(u8, 1) = .{ .io = std.testing.io };
     var state = atomic.Value(u8).init(0);
     const thread = try Thread.spawn(cfg, sleepyPush, .{ &queue, &state });
     try std.testing.expectEqual(1, queue.pop());
@@ -328,7 +331,7 @@ fn readerThread(q: *Queue(u8, 1)) !void {
 
 test "2 readers" {
     // 2 threads read, one thread writes
-    var queue: Queue(u8, 1) = .{};
+    var queue: Queue(u8, 1) = .{ .io = std.testing.io };
     const t1 = try Thread.spawn(cfg, readerThread, .{&queue});
     const t2 = try Thread.spawn(cfg, readerThread, .{&queue});
     try Thread.yield();
@@ -344,7 +347,7 @@ fn writerThread(q: *Queue(u8, 1)) !void {
 }
 
 test "2 writers" {
-    var queue: Queue(u8, 1) = .{};
+    var queue: Queue(u8, 1) = .{ .io = std.testing.io };
     const t1 = try Thread.spawn(cfg, writerThread, .{&queue});
     const t2 = try Thread.spawn(cfg, writerThread, .{&queue});
 

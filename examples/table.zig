@@ -33,12 +33,12 @@ pub fn main(init: std.process.Init) !void {
         key_press: vaxis.Key,
         winsize: vaxis.Winsize,
         table_upd,
-    }) = .{ .tty = &tty, .vaxis = &vx };
+    }) = .{ .tty = &tty, .vaxis = &vx, .io = init.io, .queue = .{ .io = init.io } };
     try loop.init();
     try loop.start();
     defer loop.stop();
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 250 * std.time.ns_per_ms);
+    try vx.queryTerminal(tty.writer(), init.io, 250 * std.time.ns_per_ms);
 
     const logo =
         \\░█░█░█▀█░█░█░▀█▀░█▀▀░░░▀█▀░█▀█░█▀▄░█░░░█▀▀░

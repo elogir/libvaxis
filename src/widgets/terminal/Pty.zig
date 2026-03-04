@@ -19,9 +19,9 @@ pub fn init() !Pty {
 }
 
 /// closes the tty and pty
-pub fn deinit(self: Pty) void {
-    self.pty.close();
-    self.tty.close();
+pub fn deinit(self: Pty, io: std.Io) void {
+    self.pty.close(io);
+    self.tty.close(io);
 }
 
 /// sets the size of the pty
