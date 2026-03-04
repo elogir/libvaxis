@@ -43,8 +43,8 @@ pub fn spawn(self: *Command, allocator: std.mem.Allocator) !void {
         try posix.dup2(self.pty.tty.handle, std.posix.STDOUT_FILENO);
         try posix.dup2(self.pty.tty.handle, std.posix.STDERR_FILENO);
 
-        self.pty.tty.close();
-        if (self.pty.pty.handle > 2) self.pty.pty.close();
+        _ = std.os.linux.close(self.pty.tty.handle);
+        if (self.pty.pty.handle > 2) _ = std.os.linux.close(self.pty.pty.handle);
 
         if (self.working_directory) |wd| {
             try std.posix.chdir(wd);
@@ -78,8 +78,8 @@ pub fn spawn(self: *Command, allocator: std.mem.Allocator) !void {
 fn handleSigChild(_: c_int) callconv(.c) void {
     const result = std.posix.waitpid(-1, 0);
 
-    Terminal.global_vt_mutex.lock();
-    defer Terminal.global_vt_mutex.unlock();
+    if (!Terminal.global_vt_mutex.tryLock()) return;
+    defer Terminal.global_vt_mutex.unlock(Terminal.global_vt_io);
     if (Terminal.global_vts) |vts| {
         var vt = vts.get(result.pid) orelse return;
         vt.event_queue.push(.exited);

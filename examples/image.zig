@@ -18,14 +18,14 @@ pub fn main(init: std.process.Init) !void {
     var vx = try vaxis.init(alloc, .{});
     defer vx.deinit(alloc, tty.writer());
 
-    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx };
+    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx, .io = init.io, .queue = .{ .io = init.io } };
     try loop.init();
 
     try loop.start();
     defer loop.stop();
 
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), init.io, 1 * std.time.ns_per_s);
 
     var read_buffer: [1024 * 1024]u8 = undefined; // 1MB buffer
     var img1 = try vaxis.zigimg.Image.fromFilePath(alloc, init.io, "examples/zig.png", &read_buffer);

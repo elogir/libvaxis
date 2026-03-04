@@ -51,13 +51,15 @@ pub fn main(init: std.process.Init) !void {
     var loop: vaxis.Loop(Event) = .{
         .vaxis = &vx,
         .tty = &tty,
+        .io = init.io,
+        .queue = .{ .io = init.io },
     };
     try loop.init();
     try loop.start();
     defer loop.stop();
     try vx.enterAltScreen(writer);
     try writer.flush();
-    try vx.queryTerminal(tty.writer(), 20 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), init.io, 20 * std.time.ns_per_s);
 
     // Initialize Views
     // - Large Map

@@ -10,7 +10,7 @@
         },
         .uucode = .{
             .url = "https://github.com/jacobsandlund/uucode/archive/refs/heads/zig-0.16.zip",
-            .hash = "uucode-0.1.0-ZZjBPphWUABH_ChjdEku1Vplc1Y107C0GvgGJk8HrX8Z",
+            .hash = "uucode-0.2.0-ZZjBPkJiVABQGPdyw9BOtU2sflHv3vovBzmYtPRj2hvm",
         },
     },
     .paths = .{

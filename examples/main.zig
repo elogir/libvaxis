@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
     var vx = try vaxis.init(alloc, .{});
     defer vx.deinit(alloc, tty.writer());
 
-    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx };
+    var loop: vaxis.Loop(Event) = .{ .tty = &tty, .vaxis = &vx, .io = init.io, .queue = .{ .io = init.io } };
     try loop.init();
 
     try loop.start();
@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Optionally enter the alternate screen
     try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), init.io, 1 * std.time.ns_per_s);
 
     // We'll adjust the color index every keypress
     var color_idx: u8 = 0;

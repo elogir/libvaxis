@@ -33,8 +33,11 @@ pub const PosixTty = struct {
     /// The file descriptor of the tty
     fd: posix.fd_t,
 
+    io: std.Io,
+
     /// File.Writer for efficient buffered writing
-    tty_writer: std.Io.File.Writer,
+    tty_buffer: [1024]u8 = undefined,
+    tty_writer: ?std.Io.File.Writer = null,
 
     pub const SignalHandler = struct {
         context: *anyopaque,
@@ -43,7 +46,8 @@ pub const PosixTty = struct {
 
     /// global signal handlers
     var handlers: [8]SignalHandler = undefined;
-    var handler_mutex: std.Thread.Mutex = .{};
+    var handler_mutex: std.Io.Mutex = .init;
+    var handler_io: std.Io = undefined;
     var handler_idx: usize = 0;
 
     var handler_installed: bool = false;
@@ -51,7 +55,7 @@ pub const PosixTty = struct {
     /// initializes a Tty instance by opening /dev/tty and "making it raw". A
     /// signal handler is installed for SIGWINCH. No callbacks are installed, be
     /// sure to register a callback when initializing the event loop
-    pub fn init(io: std.Io, buffer: []u8) !PosixTty {
+    pub fn init(io: std.Io) !PosixTty {
         // Open our tty
         const fd = try posix.openat(posix.AT.FDCWD, "/dev/tty", .{ .ACCMODE = .RDWR }, 0);
 
@@ -69,13 +73,8 @@ pub const PosixTty = struct {
         posix.sigaction(posix.SIG.WINCH, &act, null);
         handler_installed = true;
 
-        const file = std.Io.File{ .handle = fd };
-
-        const self: PosixTty = .{
-            .fd = fd,
-            .termios = termios,
-            .tty_writer = .initStreaming(file, io, buffer),
-        };
+        handler_io = io;
+        const self: PosixTty = .{ .fd = fd, .io = io, .termios = termios };
 
         global_tty = self;
 
@@ -88,7 +87,7 @@ pub const PosixTty = struct {
             std.log.err("couldn't restore terminal: {}", .{err});
         };
         if (builtin.os.tag != .macos) // closing /dev/tty may block indefinitely on macos
-            posix.close(self.fd);
+            (std.Io.File{ .handle = self.fd, .flags = .{ .nonblocking = false } }).close(handler_io);
     }
 
     /// Resets the signal handler to it's default
@@ -107,7 +106,12 @@ pub const PosixTty = struct {
     }
 
     pub fn writer(self: *PosixTty) *std.Io.Writer {
-        return &self.tty_writer.interface;
+        if (self.tty_writer == null) {
+            const file: std.Io.File = .{ .handle = self.fd, .flags = .{ .nonblocking = false } };
+            self.tty_writer = .initStreaming(file, self.io, &self.tty_buffer);
+        }
+
+        return &self.tty_writer.?.interface;
     }
 
     pub fn read(self: *const PosixTty, buf: []u8) !usize {
@@ -117,16 +121,16 @@ pub const PosixTty = struct {
     /// Install a signal handler for winsize. A maximum of 8 handlers may be
     /// installed
     pub fn notifyWinsize(handler: SignalHandler) !void {
-        handler_mutex.lock();
-        defer handler_mutex.unlock();
+        handler_mutex.lockUncancelable(handler_io);
+        defer handler_mutex.unlock(handler_io);
         if (handler_idx == handlers.len) return error.OutOfMemory;
         handlers[handler_idx] = handler;
         handler_idx += 1;
     }
 
     fn handleWinch(_: posix.SIG) callconv(.c) void {
-        handler_mutex.lock();
-        defer handler_mutex.unlock();
+        if (!handler_mutex.tryLock()) return;
+        defer handler_mutex.unlock(handler_io);
         var i: usize = 0;
         while (i < handler_idx) : (i += 1) {
             const handler = handlers[i];
@@ -189,6 +193,7 @@ pub const PosixTty = struct {
 pub const WindowsTty = struct {
     stdin: windows.HANDLE,
     stdout: windows.HANDLE,
+    io: std.Io,
 
     initial_codepage: c_uint,
     initial_input_mode: CONSOLE_MODE_INPUT,
@@ -198,7 +203,8 @@ pub const WindowsTty = struct {
     buf: [4]u8 = undefined,
 
     /// File.Writer for efficient buffered writing
-    tty_writer: std.fs.File.Writer,
+    tty_buffer: [1024]u8 = undefined,
+    tty_writer: ?std.Io.File.Writer = null,
 
     /// The last mouse button that was pressed. We store the previous state of button presses on each
     /// mouse event so we can detect which button was released
@@ -221,7 +227,7 @@ pub const WindowsTty = struct {
         .ENABLE_LVB_GRID_WORLDWIDE = 1, // enables reverse video and underline
     };
 
-    pub fn init(buffer: []u8) !Tty {
+    pub fn init(io: std.Io) !Tty {
         const stdin: std.fs.File = .stdin();
         const stdout: std.fs.File = .stdout();
 
@@ -237,12 +243,12 @@ pub const WindowsTty = struct {
             return windows.unexpectedError(windows.kernel32.GetLastError());
 
         const self: Tty = .{
+            .io = io,
             .stdin = stdin.handle,
             .stdout = stdout.handle,
             .initial_codepage = initial_output_codepage,
             .initial_input_mode = initial_input_mode,
             .initial_output_mode = initial_output_mode,
-            .tty_writer = .initStreaming(stdout, buffer),
         };
 
         // save a copy of this tty as the global_tty for panic handling
@@ -298,7 +304,12 @@ pub const WindowsTty = struct {
     }
 
     pub fn writer(self: *Tty) *std.Io.Writer {
-        return &self.tty_writer.interface;
+        if (self.tty_writer == null) {
+            const stdout: std.fs.File = .stdout();
+            self.tty_writer = .initStreaming(stdout, &self.tty_buffer);
+        }
+
+        return &self.tty_writer.?.interface;
     }
 
     pub fn read(self: *const Tty, buf: []u8) !usize {
@@ -694,20 +705,20 @@ pub const WindowsTty = struct {
 pub const TestTty = struct {
     /// Used for API compat
     fd: posix.fd_t,
+    io: std.Io,
     pipe_read: posix.fd_t,
     pipe_write: posix.fd_t,
     tty_writer: *std.Io.Writer.Allocating,
 
     /// Initializes a TestTty.
-    pub fn init(buffer: []u8) !TestTty {
-        _ = buffer;
-
+    pub fn init(io: std.Io) !TestTty {
         if (builtin.os.tag == .windows) return error.SkipZigTest;
         const list = try std.testing.allocator.create(std.Io.Writer.Allocating);
         list.* = .init(std.testing.allocator);
         const r, const w = try std.Io.Threaded.pipe2(.{});
         return .{
             .fd = r,
+            .io = io,
             .pipe_read = r,
             .pipe_write = w,
             .tty_writer = list,
@@ -715,8 +726,9 @@ pub const TestTty = struct {
     }
 
     pub fn deinit(self: TestTty) void {
-        std.posix.close(self.pipe_read);
-        std.posix.close(self.pipe_write);
+        const io = std.testing.io;
+        (std.Io.File{ .handle = self.pipe_read, .flags = .{ .nonblocking = false } }).close(io);
+        (std.Io.File{ .handle = self.pipe_write, .flags = .{ .nonblocking = false } }).close(io);
         self.tty_writer.deinit();
         std.testing.allocator.destroy(self.tty_writer);
     }

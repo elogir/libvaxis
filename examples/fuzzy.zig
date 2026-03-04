@@ -210,18 +210,14 @@ pub fn main(init: std.process.Init) !void {
     defer model.deinit(gpa);
 
     // Run the command
-    var fd = std.process.Child.init(&.{"fd"}, gpa);
-    fd.stdout_behavior = .Pipe;
-    fd.stderr_behavior = .Pipe;
-    var stdout = std.ArrayList(u8).empty;
-    var stderr = std.ArrayList(u8).empty;
-    defer stdout.deinit(gpa);
-    defer stderr.deinit(gpa);
-    try fd.spawn();
-    try fd.collectOutput(gpa, &stdout, &stderr, 10_000_000);
-    _ = try fd.wait();
+    const result = try std.process.run(gpa, init.io, .{
+        .argv = &.{"fd"},
+        .stdout_limit = .limited(10_000_000),
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
 
-    var iter = std.mem.splitScalar(u8, stdout.items, '\n');
+    var iter = std.mem.splitScalar(u8, result.stdout, '\n');
     while (iter.next()) |line| {
         if (line.len == 0) continue;
         try model.list.append(gpa, .{ .text = line });
@@ -231,8 +227,8 @@ pub fn main(init: std.process.Init) !void {
     app.deinit();
 
     if (model.result.len > 0) {
-        _ = try std.posix.write(std.posix.STDOUT_FILENO, model.result);
-        _ = try std.posix.write(std.posix.STDOUT_FILENO, "\n");
+        try std.Io.File.stdout().writeStreamingAll(init.io, model.result);
+        try std.Io.File.stdout().writeStreamingAll(init.io, "\n");
     } else {
         std.process.exit(130);
     }

@@ -43,11 +43,13 @@ pub const InputEvent = union(enum) {
     key_press: vaxis.Key,
 };
 
-pub var global_vt_mutex: std.Thread.Mutex = .{};
+pub var global_vt_mutex: std.Io.Mutex = .init;
+var global_vt_io: std.Io = undefined;
 pub var global_vts: ?std.AutoHashMap(i32, *Terminal) = null;
 pub var global_sigchild_installed: bool = false;
 
 allocator: std.mem.Allocator,
+io: std.Io,
 scrollback_size: u16,
 
 pty: Pty,
@@ -57,7 +59,7 @@ thread: ?std.Thread = null,
 
 /// the screen we draw from
 front_screen: Screen,
-front_mutex: std.Thread.Mutex = .{},
+front_mutex: std.Io.Mutex = .init,
 
 /// the back screens
 back_screen: *Screen = undefined,
@@ -65,7 +67,7 @@ back_screen_pri: Screen,
 back_screen_alt: Screen,
 // only applies to primary screen
 scroll_offset: usize = 0,
-back_mutex: std.Thread.Mutex = .{},
+back_mutex: std.Io.Mutex = .init,
 // dirty is protected by back_mutex. Only access this field when you hold that mutex
 dirty: bool = false,
 
@@ -79,12 +81,13 @@ working_directory: std.ArrayList(u8) = .empty,
 
 last_printed: []const u8 = "",
 
-event_queue: Queue = .{},
+event_queue: Queue,
 
 /// initialize a Terminal. This sets the size of the underlying pty and allocates the sizes of the
 /// screen
 pub fn init(
     allocator: std.mem.Allocator,
+    io: std.Io,
     argv: []const []const u8,
     env: *const std.process.Environ.Map,
     opts: Options,
@@ -107,8 +110,10 @@ pub fn init(
     while (col < opts.winsize.cols) : (col += 8) {
         try tabs.append(allocator, col);
     }
+    global_vt_io = io;
     return .{
         .allocator = allocator,
+        .io = io,
         .pty = pty,
         .pty_writer = pty.pty.writerStreaming(write_buf),
         .cmd = cmd,
@@ -117,6 +122,7 @@ pub fn init(
         .back_screen_pri = try Screen.init(allocator, opts.winsize.cols, opts.winsize.rows + opts.scrollback_size),
         .back_screen_alt = try Screen.init(allocator, opts.winsize.cols, opts.winsize.rows),
         .tab_stops = tabs,
+        .event_queue = .{ .io = io },
     };
 }
 
@@ -125,8 +131,8 @@ pub fn deinit(self: *Terminal) void {
     self.should_quit = true;
 
     pid: {
-        global_vt_mutex.lock();
-        defer global_vt_mutex.unlock();
+        global_vt_mutex.lockUncancelable(global_vt_io);
+        defer global_vt_mutex.unlock(global_vt_io);
         var vts = global_vts orelse break :pid;
         if (self.cmd.pid) |pid|
             _ = vts.remove(pid);
@@ -143,7 +149,7 @@ pub fn deinit(self: *Terminal) void {
         thread.join();
         self.thread = null;
     }
-    self.pty.deinit();
+    self.pty.deinit(self.io);
     self.front_screen.deinit(self.allocator);
     self.back_screen_pri.deinit(self.allocator);
     self.back_screen_alt.deinit(self.allocator);
@@ -162,16 +168,15 @@ pub fn spawn(self: *Terminal) !void {
     if (self.cmd.working_directory) |pwd| {
         try self.working_directory.appendSlice(self.allocator, pwd);
     } else {
-        const pwd = std.fs.cwd();
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const out_path = try std.os.getFdPath(pwd.fd, &buffer);
+        const out_path = try std.posix.readlinkZ("/proc/self/cwd", &buffer);
         try self.working_directory.appendSlice(self.allocator, out_path);
     }
 
     {
         // add to our global list
-        global_vt_mutex.lock();
-        defer global_vt_mutex.unlock();
+        global_vt_mutex.lockUncancelable(global_vt_io);
+        defer global_vt_mutex.unlock(global_vt_io);
         if (global_vts == null)
             global_vts = std.AutoHashMap(i32, *Terminal).init(self.allocator);
         if (self.cmd.pid) |pid|
@@ -190,8 +195,8 @@ pub fn resize(self: *Terminal, ws: Winsize) !void {
         ws.rows == self.front_screen.height)
         return;
 
-    self.back_mutex.lock();
-    defer self.back_mutex.unlock();
+    self.back_mutex.lockUncancelable(self.io);
+    defer self.back_mutex.unlock(self.io);
 
     self.front_screen.deinit(self.allocator);
     self.front_screen = try Screen.init(self.allocator, ws.cols, ws.rows);
@@ -206,7 +211,7 @@ pub fn resize(self: *Terminal, ws: Winsize) !void {
 
 pub fn draw(self: *Terminal, allocator: std.mem.Allocator, win: vaxis.Window) !void {
     if (self.back_mutex.tryLock()) {
-        defer self.back_mutex.unlock();
+        defer self.back_mutex.unlock(self.io);
         // We keep this as a separate condition so we don't deadlock by obtaining the lock but not
         // having sync
         if (!self.mode.sync) {
@@ -265,8 +270,8 @@ fn run(self: *Terminal) !void {
 
     while (!self.should_quit) {
         const event = try parser.parseReader(&reader_.interface);
-        self.back_mutex.lock();
-        defer self.back_mutex.unlock();
+        self.back_mutex.lockUncancelable(self.io);
+        defer self.back_mutex.unlock(self.io);
 
         if (!self.dirty and self.event_queue.tryPush(.redraw))
             self.dirty = true;
