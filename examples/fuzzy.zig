@@ -11,7 +11,6 @@ const Model = struct {
 
     /// Used for filtered RichText Spans and result
     arena: std.heap.ArenaAllocator,
-    filtered: std.ArrayList(vxfw.RichText),
     result: []const u8,
 
     pub fn init(gpa: std.mem.Allocator) !*Model {
@@ -201,13 +200,10 @@ fn toLower(arena: std.mem.Allocator, src: []const u8) std.mem.Allocator.Error![]
     return lower;
 }
 
-pub fn main() !void {
-    var debug_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = debug_allocator.deinit();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
 
-    const gpa = debug_allocator.allocator();
-
-    var app = try vxfw.App.init(gpa);
+    var app = try vxfw.App.init(gpa, init.io);
     errdefer app.deinit();
 
     const model = try Model.init(gpa);

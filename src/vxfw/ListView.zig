@@ -564,6 +564,7 @@ test ListView {
     var ctx: vxfw.EventContext = .{
         .alloc = std.testing.allocator,
         .cmds = .empty,
+        .io = std.testing.io,
     };
     defer ctx.cmds.deinit(ctx.alloc);
 
@@ -731,6 +732,7 @@ test "ListView: uneven scroll" {
     var ctx: vxfw.EventContext = .{
         .alloc = std.testing.allocator,
         .cmds = .empty,
+        .io = std.testing.io,
     };
     defer ctx.cmds.deinit(ctx.alloc);
 

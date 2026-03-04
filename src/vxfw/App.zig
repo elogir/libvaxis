@@ -17,6 +17,7 @@ vx: vaxis.Vaxis,
 timers: std.ArrayList(vxfw.Tick),
 wants_focus: ?vxfw.Widget,
 buffer: [1024]u8,
+io: std.Io,
 
 /// Runtime options
 pub const Options = struct {
@@ -27,7 +28,7 @@ pub const Options = struct {
 /// Create an application. We require stable pointers to do the set up, so this will create an App
 /// object on the heap. Call destroy when the app is complete to reset terminal state and release
 /// resources
-pub fn init(allocator: Allocator) !App {
+pub fn init(allocator: Allocator, io: std.Io) !App {
     var app: App = .{
         .allocator = allocator,
         .tty = undefined,
@@ -40,8 +41,9 @@ pub fn init(allocator: Allocator) !App {
         .timers = std.ArrayList(vxfw.Tick){},
         .wants_focus = null,
         .buffer = undefined,
+        .io = io,
     };
-    app.tty = try vaxis.Tty.init(&app.buffer);
+    app.tty = try vaxis.Tty.init(io, &app.buffer);
     return app;
 }
 
@@ -96,14 +98,17 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     try focus_handler.path_to_focused.append(self.allocator, widget);
     defer focus_handler.deinit(self.allocator);
 
+    const io = self.io;
+
     // Timestamp of our next frame
-    var next_frame_ms: u64 = @intCast(std.time.milliTimestamp());
+    var next_frame_ms: u64 = try nowMs(io);
 
     // Create our event context
     var ctx: vxfw.EventContext = .{
         .alloc = self.allocator,
         .phase = .capturing,
         .cmds = vxfw.CommandList{},
+        .io = io,
         .consume_event = false,
         .redraw = false,
         .quit = false,
@@ -111,13 +116,13 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
     defer ctx.cmds.deinit(self.allocator);
 
     while (true) {
-        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const now_ms: u64 = try nowMs(io);
         if (now_ms >= next_frame_ms) {
             // Deadline exceeded. Schedule the next frame
             next_frame_ms = now_ms + tick_ms;
         } else {
             // Sleep until the deadline
-            std.Thread.sleep((next_frame_ms - now_ms) * std.time.ns_per_ms);
+            try std.Io.sleep(io, .fromMilliseconds(@intCast(next_frame_ms - now_ms)), .real);
             next_frame_ms += tick_ms;
         }
 
@@ -296,7 +301,7 @@ fn handleCommand(self: *App, cmds: *vxfw.CommandList) Allocator.Error!void {
 }
 
 fn checkTimers(self: *App, ctx: *vxfw.EventContext) anyerror!void {
-    const now_ms = std.time.milliTimestamp();
+    const now_ms = try nowMs(ctx.io);
 
     // timers are always sorted descending
     while (self.timers.pop()) |tick| {
@@ -602,3 +607,8 @@ const FocusHandler = struct {
         }
     }
 };
+
+fn nowMs(io: std.Io) std.Io.Clock.Error!u64 {
+    const now = try std.Io.Clock.now(.real, io);
+    return @intCast(now.toMilliseconds());
+}

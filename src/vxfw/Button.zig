@@ -142,6 +142,7 @@ test Button {
     var ctx: vxfw.EventContext = .{
         .alloc = std.testing.allocator,
         .cmds = .empty,
+        .io = std.testing.io,
     };
     defer ctx.cmds.deinit(ctx.alloc);
 

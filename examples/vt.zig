@@ -9,19 +9,11 @@ const Event = union(enum) {
 
 pub const panic = vaxis.panic_handler;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const deinit_status = gpa.deinit();
-        //fail test; can't try in defer as defer is executed after we return
-        if (deinit_status == .leak) {
-            std.log.err("memory leak", .{});
-        }
-    }
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
 
     var buffer: [1024]u8 = undefined;
-    var tty = try vaxis.Tty.init(&buffer);
+    var tty = try vaxis.Tty.init(init.io, &buffer);
     const writer = tty.writer();
     var vx = try vaxis.init(alloc, .{});
     defer vx.deinit(alloc, writer);
@@ -34,8 +26,7 @@ pub fn main() !void {
 
     try vx.enterAltScreen(writer);
     try vx.queryTerminal(writer, 1 * std.time.ns_per_s);
-    var env = try std.process.getEnvMap(alloc);
-    defer env.deinit();
+    const env = init.environ_map;
 
     const vt_opts: vaxis.widgets.Terminal.Options = .{
         .winsize = .{
@@ -53,7 +44,7 @@ pub fn main() !void {
     var vt = try vaxis.widgets.Terminal.init(
         alloc,
         &argv,
-        &env,
+        env,
         vt_opts,
         &write_buf,
     );

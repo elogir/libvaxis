@@ -20,11 +20,11 @@ frame: u4 = 0,
 was_spinning: std.atomic.Value(bool) = .{ .raw = false },
 
 /// Start, or add one, to the spinner counter. Thread safe.
-pub fn start(self: *Spinner) ?vxfw.Command {
+pub fn start(self: *Spinner, io: std.Io) ?vxfw.Command {
     self.was_spinning.store(true, .unordered);
     const count = self.count.fetchAdd(1, .monotonic);
     if (count == 0) {
-        return vxfw.Tick.in(time_lapse, self.widget());
+        return vxfw.Tick.in(io, time_lapse, self.widget());
     }
     return null;
 }
@@ -111,13 +111,13 @@ test Spinner {
     // Start the spinner. This (maybe) returns a Tick command to schedule the next frame. If the
     // spinner is already running, no command is returned. Calling start is thread safe. The
     // returned command can be added to an EventContext to schedule the frame
-    const maybe_cmd = spinner.start();
+    const maybe_cmd = spinner.start(std.testing.io);
     try std.testing.expect(maybe_cmd != null);
     try std.testing.expect(maybe_cmd.? == .tick);
     try std.testing.expectEqual(1, spinner.count.load(.unordered));
 
     // If we call start again, we won't get another command but our counter will go up
-    const maybe_cmd2 = spinner.start();
+    const maybe_cmd2 = spinner.start(std.testing.io);
     try std.testing.expect(maybe_cmd2 == null);
     try std.testing.expectEqual(2, spinner.count.load(.unordered));
 
@@ -126,6 +126,7 @@ test Spinner {
     var ctx: vxfw.EventContext = .{
         .alloc = arena.allocator(),
         .cmds = .empty,
+        .io = std.testing.io,
     };
 
     // The event loop handles the tick event and calls us back with a .tick event. If we should keep

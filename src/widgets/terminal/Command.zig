@@ -14,7 +14,7 @@ working_directory: ?[]const u8,
 // Set after spawn()
 pid: ?std.posix.pid_t = null,
 
-env_map: *const std.process.EnvMap,
+env_map: *const std.process.Environ.Map,
 
 pty: Pty,
 
@@ -97,7 +97,7 @@ pub fn kill(self: *Command) void {
 /// hash map plus options.
 fn createEnvironFromMap(
     arena: std.mem.Allocator,
-    map: *const std.process.EnvMap,
+    map: *const std.process.Environ.Map,
 ) ![:null]?[*:0]u8 {
     const envp_count: usize = map.count();
 

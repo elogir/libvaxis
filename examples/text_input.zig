@@ -18,20 +18,12 @@ const Event = union(enum) {
     foo: u8,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const deinit_status = gpa.deinit();
-        //fail test; can't try in defer as defer is executed after we return
-        if (deinit_status == .leak) {
-            log.err("memory leak", .{});
-        }
-    }
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
 
     // Initalize a tty
     var buffer: [1024]u8 = undefined;
-    var tty = try vaxis.Tty.init(&buffer);
+    var tty = try vaxis.Tty.init(init.io, &buffer);
     defer tty.deinit();
 
     // Use a buffered writer for better performance. There are a lot of writes
@@ -94,8 +86,10 @@ pub fn main() !void {
                 } else if (key.matches('n', .{ .ctrl = true })) {
                     try vx.notify(tty.writer(), "vaxis", "hello from vaxis");
                     loop.stop();
-                    var child = std.process.Child.init(&.{"nvim"}, alloc);
-                    _ = try child.spawnAndWait();
+                    var child = try std.process.spawn(init.io, .{
+                        .argv = &.{"nvim"},
+                    });
+                    _ = try child.wait(init.io);
                     try loop.start();
                     try vx.enterAltScreen(tty.writer());
                     vx.queueRefresh();

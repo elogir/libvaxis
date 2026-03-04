@@ -79,52 +79,22 @@ pub const Buffer = struct {
         var cols: usize = self.last_cols;
         var iter = uucode.grapheme.Iterator(uucode.utf8.Iterator).init(.init(content.bytes));
 
-        var grapheme_start: usize = 0;
-        var prev_break: bool = true;
-
-        while (iter.next()) |result| {
-            if (prev_break and !result.is_break) {
-                // Start of a new grapheme
-                const cp_len: usize = std.unicode.utf8CodepointSequenceLength(result.cp) catch 1;
-                grapheme_start = iter.i - cp_len;
-            }
-
-            if (result.is_break) {
-                // End of a grapheme
-                const grapheme_end = iter.i;
-                const grapheme_len = grapheme_end - grapheme_start;
-
-                try self.grapheme.append(allocator, .{
-                    .len = @intCast(grapheme_len),
-                    .offset = @intCast(self.content.items.len + grapheme_start),
-                });
-
-                const cluster = content.bytes[grapheme_start..grapheme_end];
-                if (std.mem.eql(u8, cluster, "\n")) {
-                    self.cols = @max(self.cols, cols);
-                    cols = 0;
-                } else {
-                    // Calculate width using gwidth
-                    const w = vaxis.gwidth.gwidth(cluster, .unicode);
-                    cols +|= w;
-                }
-
-                grapheme_start = grapheme_end;
-            }
-            prev_break = result.is_break;
-        }
-
-        // Flush the last grapheme if we ended mid-cluster
-        if (!prev_break and grapheme_start < content.bytes.len) {
-            const grapheme_len = content.bytes.len - grapheme_start;
+        while (iter.nextGrapheme()) |grapheme| {
+            const grapheme_start = grapheme.start;
+            const grapheme_end = grapheme.end;
+            const grapheme_len = grapheme_end - grapheme_start;
 
             try self.grapheme.append(allocator, .{
                 .len = @intCast(grapheme_len),
                 .offset = @intCast(self.content.items.len + grapheme_start),
             });
 
-            const cluster = content.bytes[grapheme_start..];
-            if (!std.mem.eql(u8, cluster, "\n")) {
+            const cluster = content.bytes[grapheme_start..grapheme_end];
+            if (std.mem.eql(u8, cluster, "\n")) {
+                self.cols = @max(self.cols, cols);
+                cols = 0;
+            } else {
+                // Calculate width using gwidth
                 const w = vaxis.gwidth.gwidth(cluster, .unicode);
                 cols +|= w;
             }

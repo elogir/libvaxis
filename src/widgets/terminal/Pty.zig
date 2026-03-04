@@ -7,8 +7,8 @@ const Winsize = @import("../../main.zig").Winsize;
 
 const posix = std.posix;
 
-pty: std.fs.File,
-tty: std.fs.File,
+pty: std.Io.File,
+tty: std.Io.File,
 
 /// opens a new tty/pty pair
 pub fn init() !Pty {
@@ -37,7 +37,7 @@ pub fn setSize(self: Pty, ws: Winsize) !void {
 }
 
 fn openPtyLinux() !Pty {
-    const p = try posix.open("/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
+    const p = try posix.openat(posix.AT.FDCWD, "/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
     errdefer posix.close(p);
 
     // unlockpt
@@ -50,7 +50,7 @@ fn openPtyLinux() !Pty {
     const sname = try std.fmt.bufPrint(&buf, "/dev/pts/{d}", .{n});
     std.log.debug("pts: {s}", .{sname});
 
-    const t = try posix.open(sname, .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
+    const t = try posix.openat(posix.AT.FDCWD, sname, .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
 
     return .{
         .pty = .{ .handle = p },
