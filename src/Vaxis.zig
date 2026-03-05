@@ -127,14 +127,13 @@ pub fn deinit(self: *Vaxis, alloc: ?std.mem.Allocator, tty: *IoWriter) void {
     }
 }
 
-/// resets enabled features, sends cursor to home and clears below cursor
-pub fn resetState(self: *Vaxis, tty: *IoWriter) !void {
-    // always show the cursor on state reset
+/// Resets enabled terminal features without clearing screen content.
+/// Use this for non-interactive / single-shot rendering where the
+/// output should remain visible after exit.
+pub fn resetModes(self: *Vaxis, tty: *IoWriter) !void {
     tty.writeAll(ctlseqs.show_cursor) catch {};
     tty.writeAll(ctlseqs.sgr_reset) catch {};
     if (self.screen.cursor_shape != .default) {
-        // In many terminals, `.default` will set to the configured cursor shape. Others, it will
-        // change to a blinking block.
         tty.print(ctlseqs.cursor_shape, .{@intFromEnum(Cell.CursorShape.default)}) catch {};
     }
     if (self.state.kitty_keyboard) {
@@ -146,18 +145,6 @@ pub fn resetState(self: *Vaxis, tty: *IoWriter) !void {
     }
     if (self.state.bracketed_paste) {
         try self.setBracketedPaste(tty, false);
-    }
-    if (self.state.alt_screen) {
-        try tty.writeAll(ctlseqs.home);
-        try tty.writeAll(ctlseqs.erase_below_cursor);
-        try self.exitAltScreen(tty);
-    } else {
-        try tty.writeByte('\r');
-        var i: u16 = 0;
-        while (i < self.state.cursor.row) : (i += 1) {
-            try tty.writeAll(ctlseqs.ri);
-        }
-        try tty.writeAll(ctlseqs.erase_below_cursor);
     }
     if (self.state.color_scheme_updates) {
         try tty.writeAll(ctlseqs.color_scheme_reset);
@@ -179,7 +166,24 @@ pub fn resetState(self: *Vaxis, tty: *IoWriter) !void {
         try tty.writeAll(ctlseqs.osc12_reset);
         self.state.changed_cursor_color = false;
     }
+    try tty.flush();
+}
 
+/// resets enabled features, sends cursor to home and clears below cursor
+pub fn resetState(self: *Vaxis, tty: *IoWriter) !void {
+    self.resetModes(tty) catch {};
+    if (self.state.alt_screen) {
+        try tty.writeAll(ctlseqs.home);
+        try tty.writeAll(ctlseqs.erase_below_cursor);
+        try self.exitAltScreen(tty);
+    } else {
+        try tty.writeByte('\r');
+        var i: u16 = 0;
+        while (i < self.state.cursor.row) : (i += 1) {
+            try tty.writeAll(ctlseqs.ri);
+        }
+        try tty.writeAll(ctlseqs.erase_below_cursor);
+    }
     try tty.flush();
 }
 
