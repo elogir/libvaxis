@@ -943,19 +943,19 @@ pub fn transmitLocalImagePath(
     switch (format) {
         .rgb => {
             try tty.print(
-                "\x1b_Gf=24,s={d},v={d},i={d},t={c};{s}\x1b\\",
+                "\x1b_Gf=24,s={d},v={d},i={d},t={c},q=2;{s}\x1b\\",
                 .{ width, height, id, medium_char, encoded },
             );
         },
         .rgba => {
             try tty.print(
-                "\x1b_Gf=32,s={d},v={d},i={d},t={c};{s}\x1b\\",
+                "\x1b_Gf=32,s={d},v={d},i={d},t={c},q=2;{s}\x1b\\",
                 .{ width, height, id, medium_char, encoded },
             );
         },
         .png => {
             try tty.print(
-                "\x1b_Gf=100,i={d},t={c};{s}\x1b\\",
+                "\x1b_Gf=100,i={d},t={c},q=2;{s}\x1b\\",
                 .{ id, medium_char, encoded },
             );
         },
@@ -991,7 +991,7 @@ pub fn transmitPreEncodedImage(
 
     if (bytes.len < 4096) {
         try tty.print(
-            "\x1b_Gf={d},s={d},v={d},i={d};{s}\x1b\\",
+            "\x1b_Gf={d},s={d},v={d},i={d},q=2;{s}\x1b\\",
             .{
                 fmt,
                 width,
@@ -1004,14 +1004,14 @@ pub fn transmitPreEncodedImage(
         var n: usize = 4096;
 
         try tty.print(
-            "\x1b_Gf={d},s={d},v={d},i={d},m=1;{s}\x1b\\",
+            "\x1b_Gf={d},s={d},v={d},i={d},m=1,q=2;{s}\x1b\\",
             .{ fmt, width, height, id, bytes[0..n] },
         );
         while (n < bytes.len) : (n += 4096) {
             const end: usize = @min(n + 4096, bytes.len);
             const m: u2 = if (end == bytes.len) 0 else 1;
             try tty.print(
-                "\x1b_Gm={d};{s}\x1b\\",
+                "\x1b_Gm={d},q=2;{s}\x1b\\",
                 .{
                     m,
                     bytes[n..end],
