@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vaxis = @import("../main.zig");
 const vxfw = @import("vxfw.zig");
 
@@ -122,6 +123,13 @@ pub fn run(self: *App, widget: vxfw.Widget, opts: Options) anyerror!void {
         }
 
         try self.checkTimers(&ctx);
+
+        // Poll for pending SIGWINCH outside of queue lock.
+        // The signal handler only sets an atomic flag; we dispatch
+        // the registered callbacks here where mutex operations are safe.
+        if (builtin.os.tag != .windows and !builtin.is_test) {
+            if (!vx.state.in_band_resize) vaxis.Tty.pollWinch();
+        }
 
         {
             loop.queue.lock();

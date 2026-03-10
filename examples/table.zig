@@ -20,8 +20,8 @@ pub fn main(init: std.process.Init) !void {
     // Users set up below the main function
     const users_buf = try alloc.dupe(User, users[0..]);
 
-    var buffer: [1024]u8 = undefined;
-    var tty = try vaxis.Tty.init(init.io, &buffer);
+    // var buffer: [1024]u8 = undefined;
+    var tty = try vaxis.Tty.init(init.io);
     defer tty.deinit();
     const tty_writer = tty.writer();
     var vx = try vaxis.init(alloc, .{

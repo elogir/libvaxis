@@ -52,6 +52,10 @@ pub const PosixTty = struct {
 
     var handler_installed: bool = false;
 
+    /// Atomic flag set by the SIGWINCH signal handler. Checked and cleared
+    /// by pollWinch() from a non-signal context to avoid deadlocks.
+    var winch_pending: std.atomic.Value(bool) = .{ .raw = false };
+
     /// initializes a Tty instance by opening /dev/tty and "making it raw". A
     /// signal handler is installed for SIGWINCH. No callbacks are installed, be
     /// sure to register a callback when initializing the event loop
@@ -129,7 +133,20 @@ pub const PosixTty = struct {
     }
 
     fn handleWinch(_: posix.SIG) callconv(.c) void {
-        if (!handler_mutex.tryLock()) return;
+        // Only set an atomic flag. Calling mutex.lock() or queue.push()
+        // from a signal handler is not async-signal-safe and causes
+        // deadlocks when the signal is delivered to a thread that already
+        // holds one of those locks. Registered handlers are dispatched
+        // from pollWinch() instead.
+        winch_pending.store(true, .release);
+    }
+
+    /// Check if a SIGWINCH was received and dispatch registered handlers.
+    /// Must be called from a non-signal context (e.g., the main event loop)
+    /// to avoid the async-signal-safety issues with the old approach.
+    pub fn pollWinch() void {
+        if (!winch_pending.swap(false, .acquire)) return;
+        handler_mutex.lockUncancelable(handler_io);
         defer handler_mutex.unlock(handler_io);
         var i: usize = 0;
         while (i < handler_idx) : (i += 1) {
