@@ -54,10 +54,6 @@ fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw
 
 pub fn draw(self: *const Padding, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
     const pad = self.padding;
-    if (pad.left > 0 or pad.right > 0)
-        std.debug.assert(ctx.max.width != null);
-    if (pad.top > 0 or pad.bottom > 0)
-        std.debug.assert(ctx.max.height != null);
     const inner_min: vxfw.Size = .{
         .width = ctx.min.width -| (pad.right + pad.left),
         .height = ctx.min.height -| (pad.top + pad.bottom),
